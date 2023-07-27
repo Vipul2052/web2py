@@ -1,70 +1,55 @@
 import re
 from .base import SQLAdapter
-from ..utils import split_uri_args
 from . import adapters, with_connection
 
 
-@adapters.register_for("mysql:mysqlconnector")
-@adapters.register_for("mysql:pymysql")
-@adapters.register_for("mysql:MySQLdb")
-@adapters.register_for("mysql")
+@adapters.register_for('mysql')
 class MySQL(SQLAdapter):
-    dbengine = "mysql"
-    drivers = ("MySQLdb", "pymysql", "mysqlconnector")
+    dbengine = 'mysql'
+    drivers = ('MySQLdb', 'pymysql', 'mysqlconnector')
     commit_on_alter_table = True
     support_distributed_transaction = True
 
-    REGEX_URI = (
-        "^(?P<user>[^:@]+)(:(?P<password>[^@]*))?"
-        r"@(?P<host>[^:/]*|\[[^\]]+\])(:(?P<port>\d+))?"
-        "/(?P<db>[^?]+)"
-        r"(\?(?P<uriargs>.*))?$"
-    )  # set_encoding and unix_socket
+    REGEX_URI = re.compile(
+        '^(?P<user>[^:@]+)(\:(?P<password>[^@]*))?@(?P<host>\[[^/]+\]|' +
+        '[^\:/]*)(\:(?P<port>[0-9]+))?/(?P<db>[^?]+)(\?set_encoding=' +
+        '(?P<charset>\w+))?(\?unix_socket=(?P<socket>.+))?$')
 
-    def _initialize_(self):
-        super(MySQL, self)._initialize_()
-        ruri = self.uri.split("://", 1)[1]
-        m = re.match(self.REGEX_URI, ruri)
+    def _initialize_(self, do_connect):
+        super(MySQL, self)._initialize_(do_connect)
+        ruri = self.uri.split('://', 1)[1]
+        m = self.REGEX_URI.match(ruri)
         if not m:
             raise SyntaxError("Invalid URI string in DAL")
-        user = self.credential_decoder(m.group("user"))
-        password = self.credential_decoder(m.group("password"))
-        host = m.group("host")
-        uriargs = m.group("uriargs")
-        if uriargs:
-            uri_args = split_uri_args(uriargs, need_equal=True)
-            charset = uri_args.get("set_encoding") or "utf8"
-            socket = uri_args.get("unix_socket")
-        else:
-            charset = "utf8"
-            socket = None
-        # NOTE:
-        # MySQLdb (see http://mysql-python.sourceforge.net/MySQLdb.html)
-        # use UNIX sockets and named pipes by default if no host is given
-        # or host is 'localhost'; as opposed to
-        # pymysql (see https://pymysql.readthedocs.io/en/latest/modules/connections.html)
-        # or mysqlconnector (see https://dev.mysql.com/doc/connectors/en/connector-python-connectargs.html)
-        # driver, where you have to specify the socket explicitly.
+        user = self.credential_decoder(m.group('user'))
+        if not user:
+            raise SyntaxError('User required')
+        password = self.credential_decoder(m.group('password'))
+        if not password:
+            password = ''
+        host = m.group('host')
+        socket = m.group('socket')
         if not host and not socket:
-            raise SyntaxError("Host or UNIX socket name required")
-        db = m.group("db")
-        port = int(m.group("port") or "3306")
-        self.driver_args.update(user=user, db=db, charset=charset)
-        if password is not None:
-            self.driver_args["passwd"] = password
+            raise SyntaxError('Host name required')
+        db = m.group('db')
+        if not db and not socket:
+            raise SyntaxError('Database name required')
+        port = int(m.group('port') or '3306')
+        charset = m.group('charset') or 'utf8'
         if socket:
-            self.driver_args["unix_socket"] = socket
+            self.driver_args.update(
+                unix_socket=socket,
+                user=user, passwd=password,
+                charset=charset)
+            if db:
+                self.driver_args.update(db=db)
         else:
-            self.driver_args.update(host=host, port=port)
+            self.driver_args.update(
+                db=db, user=user, passwd=password, host=host, port=port,
+                charset=charset)
 
     def connector(self):
-        cursor_buffered = self.driver_args.get("cursor_buffered")
-        if cursor_buffered:
-            del self.driver_args["cursor_buffered"]
-        conn = self.driver.connect(**self.driver_args)
-        if cursor_buffered:
-            conn.cursor = lambda conn=conn: conn.cursor(buffered=True)
-        return conn
+        return self.driver.connect(**self.driver_args)
 
     def after_connection(self):
         self.execute("SET FOREIGN_KEY_CHECKS=1;")
@@ -87,11 +72,11 @@ class MySQL(SQLAdapter):
         self.execute("XA ROLLBACK;")
 
 
-@adapters.register_for("cubrid")
+@adapters.register_for('cubrid')
 class Cubrid(MySQL):
     dbengine = "cubrid"
-    drivers = ("cubriddb",)
+    drivers = ('cubriddb',)
 
-    def _initialize_(self):
-        super(Cubrid, self)._initialize_()
-        del self.driver_args["charset"]
+    def _initialize_(self, do_connect):
+        super(Cubrid, self)._initialize_(do_connect)
+        del self.driver_args['charset']

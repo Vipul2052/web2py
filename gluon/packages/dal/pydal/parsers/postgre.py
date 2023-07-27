@@ -5,9 +5,9 @@ from . import parsers, for_type
 
 @parsers.register_for(Postgre)
 class PostgreParser(ListsParser, JSONParser):
-    @for_type("jsonb")
+    @for_type('jsonb')
     def _jsonb(self, value):
-        return self.registered["json"](value, "json")
+        return self.json(value)
 
 
 class PostgreAutoJSONParser(ListsParser):
@@ -25,12 +25,12 @@ class PostgreNewAutoJSONParser(BasicParser):
 
 @parsers.register_for(PostgreBoolean)
 class PostgreBooleanParser(JSONParser):
-    @for_type("boolean")
+    @for_type('boolean')
     def _boolean(self, value):
         return value
 
 
 class PostgreBooleanAutoJSONParser(BasicParser):
-    @for_type("boolean")
+    @for_type('boolean')
     def _boolean(self, value):
         return value
